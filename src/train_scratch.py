@@ -1,5 +1,6 @@
 import argparse
 import json
+import time
 from pathlib import Path
 
 import matplotlib
@@ -11,12 +12,14 @@ from torch.utils.data import DataLoader
 from torchvision import datasets, models, transforms
 from tqdm import tqdm
 
+from src.utils import ensure_dir, set_seed
 
-def build_dataloaders(data_dir, batch_size=32, num_workers=2):
+
+def build_dataloaders(data_dir: str, batch_size: int = 32, num_workers: int = 2):
     train_transform = transforms.Compose([
         transforms.Resize((224, 224)),
         transforms.RandomHorizontalFlip(),
-        transforms.RandomRotation(10),
+        transforms.RandomRotation(12),
         transforms.ColorJitter(brightness=0.2, contrast=0.2, saturation=0.2, hue=0.1),
         transforms.ToTensor(),
         transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
@@ -35,7 +38,7 @@ def build_dataloaders(data_dir, batch_size=32, num_workers=2):
     return train_loader, val_loader, train_dataset.class_to_idx
 
 
-def build_model(num_classes):
+def build_model(num_classes: int):
     model = models.resnet18(weights=models.ResNet18_Weights.IMAGENET1K_V1)
     for name, param in model.named_parameters():
         if not name.startswith("layer4") and not name.startswith("fc"):
@@ -44,38 +47,47 @@ def build_model(num_classes):
     return model
 
 
-def save_training_plot(history, output_path):
+def save_history_plot(history, output_path: str):
     epochs = list(range(1, len(history["train_loss"]) + 1))
-    plt.figure(figsize=(12, 8))
-    plt.subplot(2, 2, 1)
-    plt.plot(epochs, history["train_loss"], label="Train Loss")
-    plt.plot(epochs, history["val_loss"], label="Val Loss")
-    plt.title("Loss vs Epoch")
-    plt.xlabel("Epoch")
-    plt.ylabel("Loss")
-    plt.legend()
+    fig, axes = plt.subplots(2, 2, figsize=(12, 8))
 
-    plt.subplot(2, 2, 2)
-    plt.plot(epochs, history["train_acc"], label="Train Accuracy")
-    plt.plot(epochs, history["val_acc"], label="Val Accuracy")
-    plt.title("Accuracy vs Epoch")
-    plt.xlabel("Epoch")
-    plt.ylabel("Accuracy")
-    plt.legend()
+    axes[0, 0].plot(epochs, history["train_loss"], label="Train Loss")
+    axes[0, 0].plot(epochs, history["val_loss"], label="Val Loss")
+    axes[0, 0].set_title("Loss vs Epoch")
+    axes[0, 0].set_xlabel("Epoch")
+    axes[0, 0].set_ylabel("Loss")
+    axes[0, 0].legend()
+
+    axes[0, 1].plot(epochs, history["train_acc"], label="Train Accuracy")
+    axes[0, 1].plot(epochs, history["val_acc"], label="Val Accuracy")
+    axes[0, 1].set_title("Accuracy vs Epoch")
+    axes[0, 1].set_xlabel("Epoch")
+    axes[0, 1].set_ylabel("Accuracy")
+    axes[0, 1].legend()
+
+    axes[1, 0].plot(epochs, history["train_loss"], label="Train Loss")
+    axes[1, 0].set_title("Train Loss")
+    axes[1, 0].set_xlabel("Epoch")
+    axes[1, 0].set_ylabel("Loss")
+
+    axes[1, 1].plot(epochs, history["val_acc"], label="Val Accuracy")
+    axes[1, 1].set_title("Validation Accuracy")
+    axes[1, 1].set_xlabel("Epoch")
+    axes[1, 1].set_ylabel("Accuracy")
 
     plt.tight_layout()
     plt.savefig(output_path, dpi=150)
     plt.close()
 
 
-def train_model(model, train_loader, val_loader, device, epochs=20, lr=3e-4, patience=3):
+def train_model(model, train_loader, val_loader, device, epochs: int = 20, lr: float = 3e-4, patience: int = 3):
     criterion = nn.CrossEntropyLoss()
     optimizer = torch.optim.Adam(filter(lambda p: p.requires_grad, model.parameters()), lr=lr)
 
     history = {"train_loss": [], "val_loss": [], "train_acc": [], "val_acc": []}
     best_val_loss = float("inf")
     best_state = None
-    stale_epochs = 0
+    no_improve = 0
 
     print("Trainable layers:")
     for name, param in model.named_parameters():
@@ -93,8 +105,7 @@ def train_model(model, train_loader, val_loader, device, epochs=20, lr=3e-4, pat
         total = 0
 
         for images, labels in tqdm(train_loader, desc=f"[Partial Fine-Tuning] Epoch {epoch}/{epochs}"):
-            images = images.to(device)
-            labels = labels.to(device)
+            images, labels = images.to(device), labels.to(device)
             optimizer.zero_grad()
             logits = model(images)
             loss = criterion(logits, labels)
@@ -102,7 +113,7 @@ def train_model(model, train_loader, val_loader, device, epochs=20, lr=3e-4, pat
             optimizer.step()
 
             running_loss += loss.item() * images.size(0)
-            _, preds = torch.max(logits, dim=1)
+            _, preds = torch.max(logits, 1)
             correct += (preds == labels).sum().item()
             total += labels.size(0)
 
@@ -115,12 +126,11 @@ def train_model(model, train_loader, val_loader, device, epochs=20, lr=3e-4, pat
         val_total = 0
         with torch.no_grad():
             for images, labels in val_loader:
-                images = images.to(device)
-                labels = labels.to(device)
+                images, labels = images.to(device), labels.to(device)
                 logits = model(images)
                 loss = criterion(logits, labels)
                 val_loss_total += loss.item() * images.size(0)
-                _, preds = torch.max(logits, dim=1)
+                _, preds = torch.max(logits, 1)
                 val_correct += (preds == labels).sum().item()
                 val_total += labels.size(0)
 
@@ -140,12 +150,12 @@ def train_model(model, train_loader, val_loader, device, epochs=20, lr=3e-4, pat
         if val_loss < best_val_loss:
             best_val_loss = val_loss
             best_state = {k: v.detach().cpu().clone() for k, v in model.state_dict().items()}
-            stale_epochs = 0
+            no_improve = 0
         else:
-            stale_epochs += 1
+            no_improve += 1
 
-        if stale_epochs >= patience:
-            print(f"Early stopping triggered at epoch {epoch}.")
+        if no_improve >= patience:
+            print(f"Early stopping at epoch {epoch}.")
             break
 
     if best_state is not None:
@@ -164,10 +174,7 @@ def main():
     parser.add_argument("--patience", type=int, default=3)
     args = parser.parse_args()
 
-    torch.manual_seed(args.seed)
-    if torch.cuda.is_available():
-        torch.cuda.manual_seed_all(args.seed)
-
+    set_seed(args.seed)
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     print(f"Using device: {device}")
 
@@ -175,13 +182,13 @@ def main():
     model = build_model(num_classes=len(class_to_idx))
     model.to(device)
 
-    start_time = __import__("time").time()
+    start = time.time()
     history = train_model(model, train_loader, val_loader, device, epochs=args.epochs, lr=args.lr, patience=args.patience)
-    training_time = __import__("time").time() - start_time
+    training_time = time.time() - start
 
-    output_dir = Path("models")
-    output_dir.mkdir(parents=True, exist_ok=True)
-    checkpoint_path = output_dir / "resnet18_partial_finetuning.pth"
+    ensure_dir("models")
+    ensure_dir("results")
+    checkpoint_path = Path("models") / "resnet18_partial_finetuning.pth"
     torch.save(model.state_dict(), checkpoint_path)
 
     history_payload = {
@@ -190,16 +197,14 @@ def main():
         "training_time_seconds": float(training_time),
         "history": history,
     }
-    with open(output_dir / "resnet18_partial_finetuning_history.json", "w", encoding="utf-8") as fh:
+    with open(Path("models") / "resnet18_partial_finetuning_history.json", "w", encoding="utf-8") as fh:
         json.dump(history_payload, fh, indent=2)
 
-    plot_path = Path("results") / "partial_finetuning_training_history.png"
-    plot_path.parent.mkdir(parents=True, exist_ok=True)
-    save_training_plot(history, plot_path)
+    save_history_plot(history, str(Path("results") / "partial_finetuning_history.png"))
 
     print(f"Model saved to: {checkpoint_path}")
-    print(f"Training history saved to: {output_dir / 'resnet18_partial_finetuning_history.json'}")
-    print(f"Training plot saved to: {plot_path}")
+    print(f"Training history saved to: models/resnet18_partial_finetuning_history.json")
+    print(f"Training plot saved to: results/partial_finetuning_history.png")
     print(f"Training time: {training_time:.2f}s")
 
 

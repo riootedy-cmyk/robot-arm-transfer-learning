@@ -1,7 +1,249 @@
-torch>=2.1.0
-torchvision>=0.16.0
-numpy>=1.23.0
-Pillow>=9.0.0
-matplotlib>=3.2.0
-scikit-learn>=1.3.0
-tqdm>=4.66.0
+# Robot Arm Transfer Learning Project
+
+## 1. Tujuan project
+
+Proyek ini membandingkan tiga pendekatan klasifikasi warna objek merah, hijau, dan biru menggunakan model ResNet-18 dengan PyTorch:
+
+1. Feature Extraction
+2. Partial Fine-Tuning
+3. Training from Scratch
+
+Tujuan utama adalah membandingkan performa model berdasarkan akurasi, precision, recall, F1-score, confusion matrix, serta inference latency.
+
+## 2. Dataset
+
+Dataset yang digunakan adalah dataset publik/eksternal berisi objek berwarna:
+- RED
+- GREEN
+- BLUE
+
+Dataset tidak dibuat secara artificial dan tidak diklaim berasal dari robot arm bila memang bukan berasal dari sumber aslinya. Pengguna harus menyiapkan dataset pada struktur folder berikut:
+
+```bash
+dataset_raw/
+├── red/
+├── green/
+└── blue/
+```
+
+Setelah proses split, data akan dibuat ke:
+
+```bash
+dataset/
+├── train/
+│   ├── red/
+│   ├── green/
+│   └── blue/
+└── val/
+    ├── red/
+    ├── green/
+    └── blue/
+```
+
+## 3. Struktur folder
+
+```bash
+robot-arm-transfer-learning-p2/
+├── dataset_raw/
+│   ├── red/
+│   ├── green/
+│   └── blue/
+├── dataset/
+│   ├── train/
+│   │   ├── red/
+│   │   ├── green/
+│   │   └── blue/
+│   └── val/
+│       ├── red/
+│       ├── green/
+│       └── blue/
+├── models/
+├── results/
+├── src/
+│   ├── prepare_dataset.py
+│   ├── train_feature_extraction.py
+│   ├── train_finetuning.py
+│   ├── train_scratch.py
+│   ├── evaluate.py
+│   ├── inference.py
+│   └── utils.py
+├── requirements.txt
+├── README.md
+├── main.py
+└── .gitignore
+```
+
+## 4. Preprocessing
+
+Preprocessing yang diterapkan:
+
+- Resize gambar menjadi 224x224
+- ImageNet normalization:
+  - mean = [0.485, 0.456, 0.406]
+  - std = [0.229, 0.224, 0.225]
+- Split train/validation tanpa data leakage
+- Augmentasi hanya untuk data training
+- Menampilkan jumlah gambar per kelas sebelum dan sesudah split
+
+## 5. Arsitektur ResNet-18
+
+Model yang digunakan adalah ResNet-18 dari torchvision. Model ini digunakan dalam tiga skenario:
+
+- Feature Extraction: backbone dibekukan; classifier dilatih
+- Partial Fine-Tuning: sebagian akhir backbone dibuka dan dilatih bersama classifier
+- Scratch: seluruh model dilatih dari nol tanpa weight ImageNet
+
+## 6. Feature Extraction
+
+Pada pendekatan ini:
+
+- ResNet-18 pretrained ImageNet digunakan
+- Seluruh backbone dibekukan
+- FC layer terakhir diganti menjadi 3 kelas
+- Hanya classifier yang dilatih
+- Model disimpan ke `models/resnet18_feature_extraction.pth`
+
+## 7. Partial Fine-Tuning
+
+Pada pendekatan ini:
+
+- ResNet-18 pretrained ImageNet digunakan
+- Bagian awal backbone tetap dibekukan
+- `layer4` dan classifier dibuka supaya dapat dilatih
+- Model disimpan ke `models/resnet18_partial_finetuning.pth`
+
+## 8. Scratch
+
+Pada pendekatan ini:
+
+- Arsitektur ResNet-18 yang sama digunakan
+- Tidak memakai pretrained weights
+- Semua parameter trainable
+- Model disimpan ke `models/resnet18_scratch.pth`
+
+## 9. Cara install
+
+```bash
+python -m venv .venv
+source .venv/bin/activate
+pip install -r requirements.txt
+```
+
+Windows PowerShell:
+
+```powershell
+python -m venv .venv
+.venv\Scripts\Activate.ps1
+pip install -r requirements.txt
+```
+
+## 10. Cara menjalankan training
+
+### 1) Menyiapkan dataset
+
+```bash
+python src/prepare_dataset.py --raw-root dataset_raw --output-root dataset --split-ratio 0.8 --seed 42
+```
+
+### 2) Feature Extraction
+
+```bash
+python src/train_feature_extraction.py --data-dir dataset --epochs 15 --batch-size 32 --lr 1e-3 --seed 42
+```
+
+### 3) Partial Fine-Tuning
+
+```bash
+python src/train_finetuning.py --data-dir dataset --epochs 20 --batch-size 32 --lr 3e-4 --seed 42
+```
+
+### 4) Scratch
+
+```bash
+python src/train_scratch.py --data-dir dataset --epochs 25 --batch-size 32 --lr 1e-3 --seed 42
+```
+
+### 5) Jalankan semua training sekaligus via main.py
+
+```bash
+python main.py --prepare --train-feature --train-finetune --train-scratch
+```
+
+## 11. Cara melakukan inference
+
+```bash
+python src/inference.py --image path/to/image.jpg --model feature_extraction
+```
+
+Pilihan model:
+- `feature_extraction`
+- `partial_finetuning`
+- `scratch`
+
+Contoh output:
+
+```bash
+Predicted class: RED
+Confidence: 97.52%
+```
+
+## 12. Cara membaca hasil
+
+Setelah training dan evaluasi, hasil akan tersimpan di folder `results/`:
+
+- `feature_extraction_metrics.json`
+- `partial_finetuning_metrics.json`
+- `scratch_metrics.json`
+- `*_confusion_matrix.png`
+- `comparison_table.csv`
+- grafik training history
+
+Untuk evaluasi model:
+
+```bash
+python src/evaluate.py --model-path models/resnet18_feature_extraction.pth --data-dir dataset --model-type feature_extraction
+python src/evaluate.py --model-path models/resnet18_partial_finetuning.pth --data-dir dataset --model-type partial_finetuning
+python src/evaluate.py --model-path models/resnet18_scratch.pth --data-dir dataset --model-type scratch
+```
+
+Untuk membuat tabel perbandingan:
+
+```bash
+python main.py --evaluate --compare
+```
+
+## 13. Keterbatasan eksperimen
+
+- Hasil sangat bergantung pada kualitas dan jumlah dataset
+- Model hanya sebaik data yang tersedia
+- Hyperparameter belum tentu optimal untuk semua dataset
+- Latensi inferensi bergantung pada hardware yang digunakan
+- Tidak ada hasil eksperimen yang dijamin valid sebelum data dan training benar-benar dijalankan
+
+## 14. Urutan perintah yang direkomendasikan
+
+```bash
+cd robot-arm-transfer-learning-p2
+python -m venv .venv
+source .venv/bin/activate
+pip install -r requirements.txt
+
+python src/prepare_dataset.py --raw-root dataset_raw --output-root dataset --split-ratio 0.8 --seed 42
+python src/train_feature_extraction.py --data-dir dataset --epochs 15 --batch-size 32 --lr 1e-3 --seed 42
+python src/train_finetuning.py --data-dir dataset --epochs 20 --batch-size 32 --lr 3e-4 --seed 42
+python src/train_scratch.py --data-dir dataset --epochs 25 --batch-size 32 --lr 1e-3 --seed 42
+
+python src/evaluate.py --model-path models/resnet18_feature_extraction.pth --data-dir dataset --model-type feature_extraction
+python src/evaluate.py --model-path models/resnet18_partial_finetuning.pth --data-dir dataset --model-type partial_finetuning
+python src/evaluate.py --model-path models/resnet18_scratch.pth --data-dir dataset --model-type scratch
+python main.py --compare
+
+python src/inference.py --image path/to/image.jpg --model feature_extraction
+```
+
+## 15. Catatan penting
+
+- Jangan menghapus folder `dataset_raw/`
+- Jangan mengarang hasil eksperimen
+- Hasil akhir hanya boleh ditulis setelah program benar-benar dijalankan
+- Jika muncul error dependency, install paket yang sesuai atau cek versi Python dan PyTorch

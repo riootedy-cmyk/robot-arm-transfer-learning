@@ -6,9 +6,8 @@ __pycache__/
 # Virtual environments
 .venv/
 venv/
-ENV/
 
-# IDE / editor files
+# IDE/editor
 .vscode/
 .idea/
 *.swp
@@ -18,12 +17,18 @@ ENV/
 .DS_Store
 Thumbs.db
 
-# Environment files
+# Environment
 .env
 .env.*
 
-# Jupyter notebook checkpoints
+# Jupyter
 .ipynb_checkpoints/
+
+# Project data
+*.pth
+*.pt
+*.png
+*.csv
 
 # Logs
 *.log
